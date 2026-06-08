@@ -1,0 +1,26 @@
+# ============================================================
+# CarCash · Netlify (deploy por GIT, con funciones server-side)
+# ============================================================
+# El CRM es una SPA con ruteo por hash (#/...). Sirve index.html
+# en la raíz y publica las Netlify Functions de server/functions
+# (WhatsApp, Instagram, Mercado Libre, Meta Ads).
+#
+# Importante: este toml está pensado para deploy por GIT (Netlify
+# corre `npm install` y bundlea las funciones). NO uses arrastrar/
+# soltar con esta config: el drop no instala dependencias y falla.
+# Cargá las env vars en Netlify → Site settings → Environment
+# variables (ver .env.example) y redeployá.
+# ============================================================
+[build]
+  publish = "."
+  functions = "server/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Fallback SPA (por si alguien entra a una ruta directa).
+# Las /.netlify/functions/* se resuelven antes que este catch-all.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
