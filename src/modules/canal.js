@@ -66,14 +66,17 @@ async function renderChat(cfg, key) {
     $('#canal-kpis').innerHTML = '';
     const body = $('#canal-body');
     body.innerHTML = `
-      <div style="height:calc(100vh - 140px); min-height:500px;">
-        <iframe
-          src="https://carcash.juanmagne.com/app"
-          style="width:100%;height:100%;border:none;border-radius:8px;"
-          allow="microphone; camera"
-          title="Chatwoot"
-        ></iframe>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:calc(100vh - 200px);gap:24px;">
+        <div style="font-size:48px;">💬</div>
+        <div style="font-size:20px;font-weight:600;color:var(--cc-text)">Chatwoot — Bandeja de WhatsApp</div>
+        <div style="color:var(--cc-muted);text-align:center;max-width:400px">Abrí Chatwoot en una ventana separada para gestionar tus conversaciones de WhatsApp.</div>
+        <button class="btn btn-primary" id="open-chatwoot-btn" style="padding:12px 32px;font-size:16px;">
+          Abrir Chatwoot
+        </button>
       </div>`;
+    $('#open-chatwoot-btn').addEventListener('click', () => {
+      window.open('https://carcash.juanmagne.com/app', 'chatwoot', 'width=1200,height=800,left=100,top=100');
+    });
     return;
   }
 
