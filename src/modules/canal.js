@@ -87,7 +87,7 @@ async function renderChat(cfg, key) {
       const h = window.screen.height * 0.85;
       const left = (window.screen.width - w) / 2;
       const top = (window.screen.height - h) / 2;
-      window.open('https://carcash.juanmagne.com/app', 'chatwoot',
+      window.open('https://carcash.juanmagne.com', 'chatwoot',
         `width=${Math.round(w)},height=${Math.round(h)},left=${Math.round(left)},top=${Math.round(top)},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`);
     });
     return;
