@@ -66,14 +66,30 @@ async function renderChat(cfg, key) {
     $('#canal-kpis').innerHTML = '';
     const body = $('#canal-body');
     body.innerHTML = `
-      <div style="height:calc(100vh - 140px); min-height:500px;">
-        <iframe
-          src="https://carcash.juanmagne.com"
-          style="width:100%;height:100%;border:none;border-radius:8px;"
-          allow="microphone; camera; storage-access"
-          title="Chatwoot"
-        ></iframe>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:calc(100vh - 200px);gap:20px;">
+        <div style="background:var(--cc-surface);border:1px solid var(--cc-line);border-radius:16px;padding:48px 56px;display:flex;flex-direction:column;align-items:center;gap:20px;max-width:480px;width:100%;">
+          <div style="width:56px;height:56px;background:#1F93FF;border-radius:14px;display:flex;align-items:center;justify-content:center;">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.96 9.96 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z" fill="white"/>
+            </svg>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--cc-text);margin-bottom:8px;">Bandeja de WhatsApp</div>
+            <div style="font-size:14px;color:var(--cc-muted);line-height:1.5;">Gestioná tus conversaciones de WhatsApp en tiempo real desde Chatwoot.</div>
+          </div>
+          <button class="btn btn-primary" id="open-chatwoot-btn" style="width:100%;padding:12px;font-size:15px;border-radius:8px;">
+            Abrir Chatwoot
+          </button>
+        </div>
       </div>`;
+    $('#open-chatwoot-btn').addEventListener('click', () => {
+      const w = window.screen.width * 0.85;
+      const h = window.screen.height * 0.85;
+      const left = (window.screen.width - w) / 2;
+      const top = (window.screen.height - h) / 2;
+      window.open('https://carcash.juanmagne.com/app', 'chatwoot',
+        `width=${Math.round(w)},height=${Math.round(h)},left=${Math.round(left)},top=${Math.round(top)},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`);
+    });
     return;
   }
 
