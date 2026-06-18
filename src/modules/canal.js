@@ -68,7 +68,7 @@ async function renderChat(cfg, key) {
     body.innerHTML = `
       <div style="height:calc(100vh - 140px); min-height:500px;">
         <iframe
-          src="https://carcash.juanmagne.com/app/login"
+          src="https://carcash.juanmagne.com/app"
           style="width:100%;height:100%;border:none;border-radius:8px;"
           allow="microphone; camera"
           title="Chatwoot"
