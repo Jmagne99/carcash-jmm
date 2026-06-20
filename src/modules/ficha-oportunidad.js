@@ -457,6 +457,7 @@ async function submitNewOpportunity() {
 const local = {
   opp: null,
   timeline: [],
+  sellers: [],
   composerTab: 'nota_interna',
   composerText: '',
 };
@@ -480,7 +481,10 @@ async function renderFicha(idOrCode) {
       `;
       return;
     }
-    local.timeline = await fetchTimeline(local.opp.id);
+    [local.timeline, local.sellers] = await Promise.all([
+      fetchTimeline(local.opp.id),
+      fetchSellers(),
+    ]);
     renderFichaUI();
   } catch (err) {
     console.error('renderFicha error', err);
@@ -582,7 +586,13 @@ function renderFichaUI() {
             <div class="sp-row"><span>Monto esperado</span><b>USD ${escapeHtml(fmt.usd(opp.expected_amount))}</b></div>
             <div class="sp-row"><span>Permuta</span><b>${opp.has_trade_in ? 'Sí' : 'No'}</b></div>
             <div class="sp-row"><span>Financiación</span><b>${opp.needs_financing ? `Sí · USD ${fmt.usd(opp.financing_amount)}` : 'No'}</b></div>
-            <div class="sp-row"><span>Vendedor</span><b>${escapeHtml(opp.assignee?.full_name || '—')}</b></div>
+            <div class="sp-row sp-row-seller">
+              <span>Vendedor</span>
+              <select id="opp-seller-inline" class="sp-seller-select">
+                <option value="">Sin asignar</option>
+                ${local.sellers.map(s => `<option value="${s.id}" ${opp.assigned_to === s.id ? 'selected' : ''}>${escapeHtml(s.full_name)}</option>`).join('')}
+              </select>
+            </div>
           </div>
 
           <div class="side-panel ${isUrgent ? 'urgent' : ''}">
@@ -774,6 +784,21 @@ function attachFichaHandlers() {
     });
   }
   $('#btn-set-action')?.addEventListener('click', promptSetAction);
+
+  $('#opp-seller-inline')?.addEventListener('change', async (e) => {
+    const sellerId = e.target.value || null;
+    const { error } = await supabase
+      .from('opportunities')
+      .update({ assigned_to: sellerId })
+      .eq('id', local.opp.id);
+    if (error) {
+      toast('Error asignando vendedor', error.message, 'error');
+      e.target.value = local.opp.assigned_to || '';
+    } else {
+      local.opp.assigned_to = sellerId;
+      toast('Vendedor actualizado', e.target.options[e.target.selectedIndex].text, 'ok');
+    }
+  });
 
   // AI tabs
   $('#ai-tabs')?.addEventListener('click', (e) => {
@@ -1020,6 +1045,9 @@ const styles = `
   .sp-row:last-child { border-bottom: none; }
   .sp-row span { color: var(--cc-muted); }
   .sp-row b { color: var(--cc-ink); font-weight: 500; text-align: right; }
+  .sp-row-seller { align-items: center; }
+  .sp-seller-select { border: 1px solid var(--cc-line); background: var(--cc-bg); font-family: inherit; font-size: 12px; color: var(--cc-ink); padding: 3px 6px; cursor: pointer; max-width: 160px; }
+  .sp-seller-select:focus { outline: none; border-color: var(--cc-ink); }
   .sp-photo { width: 100%; aspect-ratio: 16/10; object-fit: cover; margin-bottom: 8px; border: 1px solid var(--cc-line-soft); }
   .sp-link { color: var(--cc-ink); text-decoration: underline; font-size: 11px; }
   .sp-empty { color: var(--cc-muted); font-style: italic; font-size: 12px; }

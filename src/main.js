@@ -63,6 +63,7 @@ register('/pipeline/:id', {
   num: '02.1',
 });
 
+
 register('/bandeja', {
   module: '/src/modules/bandeja.js',
   title: 'Bandeja',

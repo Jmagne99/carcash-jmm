@@ -60,15 +60,25 @@ function leadTemp(opp) {
 // ============================================================
 // ESTADO LOCAL DEL MÓDULO
 // ============================================================
+const CHATWOOT_BASE = 'https://financiera-sp-carcash-chatwoot.nwnae8.easypanel.host';
+
+const LEAD_STATUS_LABELS = {
+  nuevo: 'Nuevo', contactado: 'Contactado', calificado: 'Calificado',
+  negociacion: 'Negociación', ganado: 'Ganado', perdido: 'Perdido',
+};
+const LEAD_CANAL_LABELS = {
+  whatsapp: 'WhatsApp', instagram: 'Instagram', web: 'Web', llamada: 'Llamada', otro: 'Otro',
+};
+
 const local = {
   opportunities: [],
   sellers: [],
+  leads: [],
   thresholds: { warn: 24, warn2: 48, danger: 72 },
-  filters: {
-    seller: 'all',
-    origin: 'all',
-    search: '',
-  },
+  filters: { seller: 'all', origin: 'all', search: '' },
+  leadsFilters: { status: 'all', canal: 'all' },
+  activeTab: 'oportunidades',
+  realtimeSub: null,
   loading: false,
 };
 
@@ -184,13 +194,28 @@ export function render() {
       <div class="filters" id="filters"></div>
     </div>
 
-    <div class="kanban-meta" id="kanban-meta"></div>
-    <div class="kanban" id="kanban"></div>
+    <div class="pipeline-tabs">
+      <button class="pipeline-tab active" data-tab="oportunidades">Oportunidades</button>
+      <button class="pipeline-tab" data-tab="leads">Leads Bot</button>
+    </div>
+
+    <div id="tab-oportunidades">
+      <div class="kanban-meta" id="kanban-meta"></div>
+      <div class="kanban" id="kanban"></div>
+    </div>
+    <div id="tab-leads" class="hidden">
+      <div class="leads-toolbar">
+        <div class="leads-filters-wrap" id="leads-filters"></div>
+        <button class="btn btn-ghost" id="btn-leads-new">+ Nuevo lead</button>
+      </div>
+      <div class="leads-grid" id="leads-grid"></div>
+    </div>
   `;
 
   renderFilters();
   renderKanban();
   attachHandlers();
+  renderLeadsFilters();
 }
 
 function renderFilters() {
@@ -507,6 +532,249 @@ async function updateStageWithLoss(oppId, newStage, oldStage, lossInfo) {
 }
 
 // ============================================================
+// LEADS BOT
+// ============================================================
+async function fetchLeads() {
+  const { data, error } = await supabase
+    .from('leads')
+    .select('*, seller:assigned_to(id, full_name, avatar_initials)')
+    .order('created_at', { ascending: false });
+  if (error) { toast('Error cargando leads', error.message, 'error'); return []; }
+  return data || [];
+}
+
+async function updateLead(id, fields) {
+  const { error } = await supabase.from('leads').update(fields).eq('id', id);
+  if (error) { toast('Error actualizando lead', error.message, 'error'); return false; }
+  return true;
+}
+
+async function createLead(fields) {
+  const { data, error } = await supabase.from('leads').insert(fields).select().single();
+  if (error) { toast('Error creando lead', error.message, 'error'); return null; }
+  return data;
+}
+
+async function deleteLead(id) {
+  const { error } = await supabase.from('leads').delete().eq('id', id);
+  if (error) { toast('Error eliminando lead', error.message, 'error'); return false; }
+  return true;
+}
+
+function getFilteredLeads() {
+  return local.leads.filter(l => {
+    if (local.leadsFilters.status !== 'all' && l.status !== local.leadsFilters.status) return false;
+    if (local.leadsFilters.canal !== 'all' && l.canal !== local.leadsFilters.canal) return false;
+    return true;
+  });
+}
+
+function renderLeadsFilters() {
+  const c = $('#leads-filters');
+  if (!c) return;
+  c.innerHTML = '';
+
+  const makeChips = (group, labels, current) => {
+    const wrap = el('div', { class: 'filter-chips' });
+    wrap.appendChild(chipEl('all', 'Todos', current === 'all', group));
+    Object.entries(labels).forEach(([k, v]) => wrap.appendChild(chipEl(k, v, current === k, group)));
+    return wrap;
+  };
+
+  const sg = el('div', { class: 'filter-group' });
+  sg.appendChild(el('span', { class: 'filter-lbl' }, 'Estado'));
+  sg.appendChild(makeChips('lstatus', LEAD_STATUS_LABELS, local.leadsFilters.status));
+  c.appendChild(sg);
+
+  const cg = el('div', { class: 'filter-group' });
+  cg.appendChild(el('span', { class: 'filter-lbl' }, 'Canal'));
+  cg.appendChild(makeChips('lcanal', LEAD_CANAL_LABELS, local.leadsFilters.canal));
+  c.appendChild(cg);
+}
+
+function chipEl(value, label, active, group) {
+  return el('div', { class: 'filter-chip' + (active ? ' active' : ''), dataset: { value, group } }, label);
+}
+
+function renderLeadsGrid() {
+  const grid = $('#leads-grid');
+  if (!grid) return;
+  const filtered = getFilteredLeads();
+
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div class="leads-empty">Sin leads todavía</div>`;
+    return;
+  }
+  grid.innerHTML = '';
+  filtered.forEach(lead => grid.appendChild(renderLeadCard(lead)));
+}
+
+function renderLeadCard(lead) {
+  const seller = lead.seller;
+  const isBot = !lead.assigned_to && (lead.chatwoot_conversation_id || lead.canal === 'whatsapp');
+  const chatwootUrl = lead.chatwoot_account_id && lead.chatwoot_conversation_id
+    ? `${CHATWOOT_BASE}/app/accounts/${lead.chatwoot_account_id}/conversations/${lead.chatwoot_conversation_id}`
+    : null;
+
+  const sellerOptions = `<option value="">Sin asignar</option>` +
+    local.sellers.map(s =>
+      `<option value="${s.id}" ${lead.assigned_to === s.id ? 'selected' : ''}>${escapeHtml(s.full_name)}</option>`
+    ).join('');
+
+  const card = el('div', { class: `lead-card status-${lead.status}` });
+  card.innerHTML = `
+    <div class="lc-top">
+      <div class="lc-name">${escapeHtml(lead.nombre || '—')}</div>
+      <div class="lc-badges">
+        ${isBot ? '<span class="lc-badge-bot">BOT</span>' : ''}
+        <span class="lc-status-badge lsb-${lead.status}">${LEAD_STATUS_LABELS[lead.status] || lead.status}</span>
+      </div>
+    </div>
+    <div class="lc-meta">
+      <span class="lc-canal">${LEAD_CANAL_LABELS[lead.canal] || lead.canal || '—'}</span>
+      ${lead.telefono ? `<span>📱 ${escapeHtml(lead.telefono)}</span>` : ''}
+      ${lead.email ? `<span>✉ ${escapeHtml(lead.email)}</span>` : ''}
+    </div>
+    ${lead.unidad_interes ? `<div class="lc-unidad">${escapeHtml(lead.unidad_interes)}</div>` : ''}
+    ${lead.consulta ? `<div class="lc-consulta">${escapeHtml(lead.consulta.slice(0, 110))}${lead.consulta.length > 110 ? '…' : ''}</div>` : ''}
+    <div class="lc-assign">
+      <label class="filter-lbl">Vendedor</label>
+      <div class="lc-assign-row">
+        <span class="lc-avatar ${!seller ? 'lc-avatar-empty' : ''}">${seller ? escapeHtml(seller.avatar_initials || seller.full_name.slice(0,2)) : '—'}</span>
+        <select class="lc-seller-select">${sellerOptions}</select>
+      </div>
+    </div>
+    <div class="lc-bottom">
+      <div class="lc-actions">
+        ${chatwootUrl ? `<a class="btn btn-ghost btn-xs lc-chat" href="${chatwootUrl}" target="_blank">Abrir chat</a>` : ''}
+        <button class="btn btn-ghost btn-xs lc-edit-btn">Editar</button>
+        <button class="btn btn-ghost btn-xs lc-del-btn">Borrar</button>
+      </div>
+      <span class="lc-date">${new Date(lead.created_at).toLocaleDateString('es-AR')}</span>
+    </div>
+  `;
+
+  card.querySelector('.lc-seller-select').addEventListener('change', async e => {
+    const sellerId = e.target.value || null;
+    const ok = await updateLead(lead.id, { assigned_to: sellerId });
+    if (ok) {
+      lead.assigned_to = sellerId;
+      lead.seller = local.sellers.find(s => s.id === sellerId) || null;
+      const av = card.querySelector('.lc-avatar');
+      av.textContent = lead.seller ? (lead.seller.avatar_initials || lead.seller.full_name.slice(0,2)) : '—';
+      av.classList.toggle('lc-avatar-empty', !lead.seller);
+      toast('Vendedor asignado', lead.seller?.full_name || 'Sin asignar', 'ok');
+    } else {
+      e.target.value = lead.assigned_to || '';
+    }
+  });
+
+  card.querySelector('.lc-edit-btn').addEventListener('click', () => openLeadModal(lead));
+  card.querySelector('.lc-del-btn').addEventListener('click', async () => {
+    if (!confirm(`¿Borrar el lead de ${lead.nombre}?`)) return;
+    const ok = await deleteLead(lead.id);
+    if (ok) { toast('Lead eliminado', null, 'ok'); local.leads = await fetchLeads(); renderLeadsGrid(); }
+  });
+
+  return card;
+}
+
+function openLeadModal(lead = null) {
+  const isEdit = !!lead;
+  const backdrop = el('div', { class: 'modal-backdrop' });
+  const modal = el('div', { class: 'modal' });
+
+  modal.innerHTML = `
+    <div class="modal-hd">
+      <h3>${isEdit ? 'Editar lead' : 'Nuevo lead'}</h3>
+      <button class="modal-close" id="lmodal-close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="lm-row">
+        <div class="field"><label>Nombre *</label><input id="lf-nombre" value="${escapeHtml(lead?.nombre||'')}"></div>
+        <div class="field"><label>Teléfono</label><input id="lf-tel" value="${escapeHtml(lead?.telefono||'')}"></div>
+      </div>
+      <div class="lm-row">
+        <div class="field"><label>Email</label><input id="lf-email" value="${escapeHtml(lead?.email||'')}"></div>
+        <div class="field"><label>Canal</label>
+          <select id="lf-canal">${Object.entries(LEAD_CANAL_LABELS).map(([k,v])=>`<option value="${k}" ${(lead?.canal||'whatsapp')===k?'selected':''}>${v}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="field"><label>Unidad de interés</label><input id="lf-unidad" value="${escapeHtml(lead?.unidad_interes||'')}"></div>
+      <div class="field"><label>Consulta</label><textarea id="lf-consulta" rows="3">${escapeHtml(lead?.consulta||'')}</textarea></div>
+      <div class="lm-row">
+        <div class="field"><label>Estado</label>
+          <select id="lf-status">${Object.entries(LEAD_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${(lead?.status||'nuevo')===k?'selected':''}>${v}</option>`).join('')}</select>
+        </div>
+        <div class="field"><label>Vendedor</label>
+          <select id="lf-seller">
+            <option value="">Sin asignar</option>
+            ${local.sellers.map(s=>`<option value="${s.id}" ${lead?.assigned_to===s.id?'selected':''}>${escapeHtml(s.full_name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="lmodal-cancel">Cancelar</button>
+      <button class="btn" id="lmodal-save">${isEdit ? 'Guardar' : 'Crear'}</button>
+    </div>
+  `;
+
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  modal.querySelector('#lmodal-close').addEventListener('click', close);
+  modal.querySelector('#lmodal-cancel').addEventListener('click', close);
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+
+  modal.querySelector('#lmodal-save').addEventListener('click', async () => {
+    const nombre = modal.querySelector('#lf-nombre').value.trim();
+    if (!nombre) { toast('Nombre requerido', null, 'error'); return; }
+    const fields = {
+      nombre,
+      telefono: modal.querySelector('#lf-tel').value.trim() || null,
+      email: modal.querySelector('#lf-email').value.trim() || null,
+      canal: modal.querySelector('#lf-canal').value,
+      unidad_interes: modal.querySelector('#lf-unidad').value.trim() || null,
+      consulta: modal.querySelector('#lf-consulta').value.trim() || null,
+      status: modal.querySelector('#lf-status').value,
+      assigned_to: modal.querySelector('#lf-seller').value || null,
+    };
+    const btn = modal.querySelector('#lmodal-save');
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    if (isEdit) {
+      const ok = await updateLead(lead.id, fields);
+      if (ok) { toast('Lead actualizado', null, 'ok'); close(); local.leads = await fetchLeads(); renderLeadsGrid(); }
+    } else {
+      const created = await createLead(fields);
+      if (created) { toast('Lead creado', null, 'ok'); close(); local.leads = await fetchLeads(); renderLeadsGrid(); }
+    }
+    btn.disabled = false;
+  });
+}
+
+function subscribeLeadsRealtime() {
+  if (local.realtimeSub) supabase.removeChannel(local.realtimeSub);
+  local.realtimeSub = supabase
+    .channel('leads-pipeline-rt')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, async () => {
+      local.leads = await fetchLeads();
+      if (local.activeTab === 'leads') renderLeadsGrid();
+    })
+    .subscribe();
+}
+
+function switchTab(tab) {
+  local.activeTab = tab;
+  $$('.pipeline-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  $('#tab-oportunidades').classList.toggle('hidden', tab !== 'oportunidades');
+  $('#tab-leads').classList.toggle('hidden', tab !== 'leads');
+  const filtersEl = $('#filters');
+  if (filtersEl) filtersEl.classList.toggle('hidden', tab !== 'oportunidades');
+  if (tab === 'leads') { renderLeadsFilters(); renderLeadsGrid(); }
+}
+
+// ============================================================
 // HANDLERS
 // ============================================================
 let searchHandler = null;
@@ -536,8 +804,24 @@ function attachHandlers() {
   $('#btn-refresh').addEventListener('click', () => mount());
 
   // Nueva oportunidad
-  $('#btn-new-opp').addEventListener('click', () => {
-    navigate('/pipeline/nueva');
+  $('#btn-new-opp').addEventListener('click', () => navigate('/pipeline/nueva'));
+
+  // Tabs
+  $$('.pipeline-tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+  // Nuevo lead
+  $('#btn-leads-new')?.addEventListener('click', () => openLeadModal());
+
+  // Filtros de leads
+  $('#leads-filters')?.addEventListener('click', e => {
+    const chip = e.target.closest('.filter-chip');
+    if (!chip) return;
+    const { value, group } = chip.dataset;
+    if (group === 'lstatus') local.leadsFilters.status = value;
+    if (group === 'lcanal') local.leadsFilters.canal = value;
+    chip.closest('.filter-chips').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    renderLeadsGrid();
   });
 
   // Búsqueda integrada con el topbar #search
@@ -557,15 +841,17 @@ function attachHandlers() {
 // MOUNT (se llama desde el router)
 // ============================================================
 export async function mount(_params = {}) {
-  render(); // render inicial con loading
+  render();
 
-  [local.opportunities, local.sellers] = await Promise.all([
+  [local.opportunities, local.sellers, local.leads] = await Promise.all([
     fetchOpportunities(),
     fetchSellers(),
+    fetchLeads(),
   ]);
 
   renderFilters();
   renderKanban();
+  subscribeLeadsRealtime();
 }
 
 export default mount;
@@ -661,6 +947,57 @@ const styles = `
   .loss-select:focus, .loss-notes:focus { outline: none; border-color: var(--cc-ink); }
   .loss-notes { resize: vertical; min-height: 60px; }
   .stage[data-stage="perdida"] .stage-hd { border-top: 2px solid var(--cc-muted); }
+
+  /* TABS */
+  .pipeline-tabs { display:flex; gap:0; border-bottom:1px solid var(--cc-line); padding:0 20px; margin-top:12px; }
+  @container app (min-width:900px) { .pipeline-tabs { padding:0 32px; } }
+  .pipeline-tab { padding:10px 20px; font-family:var(--cc-font-mono); font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:var(--cc-muted); cursor:pointer; border:none; background:transparent; border-bottom:2px solid transparent; margin-bottom:-1px; font-weight:500; }
+  .pipeline-tab.active { color:var(--cc-ink); border-bottom-color:var(--cc-ink); }
+  .pipeline-tab:hover:not(.active) { color:var(--cc-ink); }
+
+  /* LEADS GRID */
+  .leads-toolbar { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; border-bottom:1px solid var(--cc-line); flex-wrap:wrap; gap:8px; }
+  @container app (min-width:900px) { .leads-toolbar { padding:12px 32px; } }
+  .leads-filters-wrap { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .leads-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; padding:20px; }
+  @container app (min-width:900px) { .leads-grid { padding:24px 32px; } }
+  .leads-empty { grid-column:1/-1; text-align:center; padding:60px; font-family:var(--cc-font-mono); font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:var(--cc-muted); }
+
+  /* LEAD CARD */
+  .lead-card { background:var(--cc-surface); border:1px solid var(--cc-line); border-left:3px solid var(--cc-info); padding:13px; display:flex; flex-direction:column; gap:6px; }
+  .lead-card.status-ganado { border-left-color:var(--cc-ok); }
+  .lead-card.status-perdido { border-left-color:var(--cc-muted); opacity:.7; }
+  .lead-card.status-negociacion { border-left-color:var(--cc-champagne); }
+  .lc-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .lc-name { font-size:13px; font-weight:500; flex:1; }
+  .lc-badges { display:flex; gap:4px; align-items:center; flex-shrink:0; }
+  .lc-badge-bot { font-family:var(--cc-font-mono); font-size:8px; font-weight:700; letter-spacing:0.15em; padding:2px 6px; background:var(--cc-ink); color:var(--cc-bg); }
+  .lc-status-badge { font-family:var(--cc-font-mono); font-size:8px; letter-spacing:0.12em; text-transform:uppercase; padding:2px 6px; border:1px solid var(--cc-line); color:var(--cc-muted); }
+  .lsb-nuevo { color:var(--cc-info); border-color:var(--cc-info); }
+  .lsb-ganado { color:var(--cc-ok); border-color:var(--cc-ok); }
+  .lsb-negociacion { color:var(--cc-champagne); border-color:var(--cc-champagne); }
+  .lc-meta { display:flex; gap:8px; flex-wrap:wrap; font-family:var(--cc-font-mono); font-size:10px; color:var(--cc-muted); }
+  .lc-canal { text-transform:uppercase; letter-spacing:0.1em; font-weight:600; color:var(--cc-champagne); }
+  .lc-unidad { font-family:var(--cc-font-display); font-style:italic; font-size:11px; color:var(--cc-muted); }
+  .lc-consulta { font-size:12px; line-height:1.4; border-left:2px solid var(--cc-line); padding-left:8px; color:var(--cc-ink); }
+  .lc-assign { padding:8px 0; border-top:1px solid var(--cc-line-soft); border-bottom:1px solid var(--cc-line-soft); }
+  .lc-assign-row { display:flex; align-items:center; gap:7px; margin-top:4px; }
+  .lc-avatar { width:22px; height:22px; background:var(--cc-ink); color:var(--cc-bg); border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:9px; font-weight:600; flex-shrink:0; }
+  .lc-avatar-empty { background:var(--cc-line); color:var(--cc-muted); }
+  .lc-seller-select { flex:1; padding:5px 8px; border:1px solid var(--cc-line); background:var(--cc-bg); font-family:inherit; font-size:12px; color:var(--cc-ink); }
+  .lc-seller-select:focus { outline:none; border-color:var(--cc-ink); }
+  .lc-bottom { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; }
+  .lc-actions { display:flex; gap:4px; }
+  .lc-chat { color:var(--cc-ok) !important; border-color:var(--cc-ok) !important; text-decoration:none; }
+  .btn-xs { padding:3px 8px !important; font-size:10px !important; }
+  .lc-date { font-family:var(--cc-font-mono); font-size:9px; color:var(--cc-muted); }
+  .lm-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:480px) { .lm-row { grid-template-columns:1fr; } }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:var(--cc-muted); font-weight:500; }
+  .field input,.field select,.field textarea { padding:9px 11px; border:1px solid var(--cc-line); background:var(--cc-bg); font-family:inherit; font-size:13px; color:var(--cc-ink); }
+  .field input:focus,.field select:focus,.field textarea:focus { outline:none; border-color:var(--cc-ink); }
+  .field textarea { resize:vertical; min-height:70px; }
 `;
 
 injectStyles('pipeline-styles', styles);
